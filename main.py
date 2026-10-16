@@ -1,6 +1,6 @@
 import argparse
 import enum
-import threading
+import time
 
 from flatspin.model import PinwheelSpinIceDiamond, SquareSpinIceClosed, SpinIce
 import keyboard
@@ -22,7 +22,7 @@ def remap_range(
     )
 
 
-class Input:
+class Instrument:
     class Arrow(enum.Enum):
         UP = 1
         DOWN = 2
@@ -30,11 +30,19 @@ class Input:
         RIGHT = 4
 
     def __init__(
-        self, width: int, height: int, *, ice_type: str, input_type: str
+        self,
+        width: int,
+        height: int,
+        *,
+        ice_type: str,
+        input_type: str,
+        animation: bool,
     ):
         plt.rcParams["animation.frame_format"] = "svg"
 
-        self.fig, self.ax = plt.subplots()
+        self.a = 0.0
+        self.b = 0.0
+        self.animation = animation
 
         if ice_type == "pinwheel":
             self.model = PinwheelSpinIceDiamond(size=(width, height))
@@ -43,16 +51,20 @@ class Input:
         else:
             raise Exception("Invalid spin ice type: " + ice_type)
 
-        self.a = 0.0
-        self.b = 0.0
-
-        self.model.set_h_ext([self.a, self.b])
-        self.model.plot()
+        if self.animation:
+            self.fig, self.ax = plt.subplots()
+            self.model.set_h_ext([self.a, self.b])
+            self.model.plot()
 
         if input_type == "joystick":
-            self.t = threading.Thread(target=self._handle_midi)
-            self.run = True
-            self.t.start()
+            device_name = next(
+                device["name"]
+                for device in mido.backends.rtmidi.get_devices()
+                if device["is_input"] is True
+            )
+            self.in_port: mido.ports.BaseInput = mido.open_input(
+                device_name, callback=self._handle_midi
+            )
         elif input_type == "keyboard":
             keyboard.add_hotkey("up", self._on_press, [self.Arrow.UP])
             keyboard.add_hotkey("down", self._on_press, [self.Arrow.DOWN])
@@ -62,70 +74,60 @@ class Input:
         else:
             raise Exception("Invalid input type: " + input_type)
 
-    def __del__(self):
-        self.t.join(timeout=1.0)
-
     def _flip_mag(self):
         self.model.polarize()
 
     def _on_press(self, key: Arrow):
         match key:
             case self.Arrow.UP:
-                self.a = 1
+                self.a = 0.5
             case self.Arrow.DOWN:
-                self.a = -1
+                self.a = -0.5
             case self.Arrow.LEFT:
-                self.b = -1
+                self.b = -0.5
             case self.Arrow.RIGHT:
-                self.b = 1
-        self.model.set_h_ext([self.a, self.b])
-        print(self.a, self.b)
+                self.b = 0.5
 
-    def draw(self):
-        anim = FuncAnimation(
-            self.fig,
-            self._animate,
-            frames=self._step(),
-            interval=30,
-            blit=False,
-            cache_frame_data=False,
-        )
-        plt.show()
-        plt.close()
-
-        self.run = False
-
-    def _step(self):
-        yield self.model
-        while True:
-            # Update ext field here
-            self.model.set_h_ext([self.a, self.b])
-            self.model.relax()
+    def run(self):
+        def _step():
             yield self.model
+            while True:
+                # Update ext field here
+                self.model.set_h_ext([self.a, self.b])
+                self.model.relax()
+                yield self.model
 
-    def _animate(self, model: SpinIce):
-        self.ax.set_title(str(model.h_ext[0]))
-        model.plot(ax=self.ax, replace=True)
+        def _animate(model: SpinIce):
+            self.ax.set_title(str(model.h_ext[0]))
+            model.plot(ax=self.ax, replace=True)
 
-    def _handle_midi(self):
-        device_name = next(
-            device["name"]
-            for device in mido.backends.rtmidi.get_devices()
-            if device["is_input"] is True
-        )
-        in_port = mido.backends.rtmidi.Input(device_name)
+        if self.animation:
+            anim = FuncAnimation(
+                self.fig,
+                _animate,
+                frames=_step(),
+                interval=30,
+                blit=False,
+                cache_frame_data=False,
+            )
+            plt.show()
+            plt.close()
+        else:
+            while True:
+                print(self.a, self.b)
+                time.sleep(1)
 
+    def _handle_midi(self, msg: mido.Message):
+        h_ext_min = -0.5
         h_ext_max = 0.5
+        midi_min = 0
+        midi_max = 127
 
-        while self.run:
-            # x value never changed
-            msg: mido.Message = in_port.receive()
-            if msg.is_cc(1):
-                value = remap_range(msg.value, 0, 127, -h_ext_max, h_ext_max)
-                self.b = value
-            elif msg.is_cc(2):
-                value = remap_range(msg.value, 0, 127, -h_ext_max, h_ext_max)
-                self.a = value
+        value = remap_range(msg.value, midi_min, midi_max, h_ext_min, h_ext_max)
+        if msg.is_cc(1):
+            self.b = value
+        elif msg.is_cc(2):
+            self.a = value
 
 
 def main() -> None:
@@ -137,14 +139,21 @@ def main() -> None:
     parser.add_argument(
         "-i", "--input", choices=["joystick", "keyboard"], default="joystick"
     )
+    parser.add_argument("-a", "--animation", action="store_true", default=True)
     args = parser.parse_args()
 
     dimension: int = args.dimension
     ice_type: str = args.type
     input_type: str = args.input
+    animation: bool = args.animation
 
-    inp = Input(dimension, dimension, ice_type=ice_type, input_type=input_type)
-    inp.draw()
+    Instrument(
+        dimension,
+        dimension,
+        ice_type=ice_type,
+        input_type=input_type,
+        animation=animation,
+    ).run()
 
 
 if __name__ == "__main__":
