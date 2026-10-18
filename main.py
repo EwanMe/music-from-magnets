@@ -9,6 +9,8 @@ from matplotlib.animation import FuncAnimation
 import mido.backends.rtmidi
 import mido
 
+import wavetable
+
 
 def remap_range(
     value: int | float,
@@ -131,6 +133,16 @@ class Instrument:
 
 
 def main() -> None:
+
+    wt = wavetable.Wavetable(44100)
+    wt.add_wave(440, 1)
+
+    with wt:
+        time.sleep(1)
+        wt.add_wave(2 * 440, 0.7)
+        time.sleep(1)
+    return
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--dimension", type=int, default=8)
     parser.add_argument(
