@@ -1,13 +1,16 @@
 import argparse
 import enum
+import threading
 import time
 
 from flatspin.model import PinwheelSpinIceDiamond, SquareSpinIceClosed, SpinIce
+from flatspin.plotting import plot_vectors
 import keyboard
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import mido.backends.rtmidi
 import mido
+import numpy as np
 
 import wavetable
 
@@ -45,6 +48,8 @@ class Instrument:
         self.a = 0.0
         self.b = 0.0
         self.animation = animation
+        self.lock = threading.Lock()
+        self.updated = True
 
         if ice_type == "pinwheel":
             self.model = PinwheelSpinIceDiamond(size=(width, height))
@@ -57,6 +62,7 @@ class Instrument:
             self.fig, self.ax = plt.subplots()
             self.model.set_h_ext([self.a, self.b])
             self.model.plot()
+            # plot_vectors(self.model.pos, self.model.h_ext, normalize=True)
 
         if input_type == "joystick":
             device_name = next(
@@ -75,6 +81,10 @@ class Instrument:
             keyboard.add_hotkey("space", self._flip_mag)
         else:
             raise Exception("Invalid input type: " + input_type)
+
+        self._audio_running = True
+        self._audio_thread = threading.Thread(target=self._play_audio)
+        self._audio_thread.start()
 
     def _flip_mag(self):
         self.model.polarize()
@@ -96,12 +106,21 @@ class Instrument:
             while True:
                 # Update ext field here
                 self.model.set_h_ext([self.a, self.b])
+                with self.lock:
+                    self.updated = True
                 self.model.relax()
                 yield self.model
 
         def _animate(model: SpinIce):
             self.ax.set_title(str(model.h_ext[0]))
             model.plot(ax=self.ax, replace=True)
+            # plot_vectors(
+            #     self.model.pos,
+            #     self.model.h_ext,
+            #     ax=self.ax,
+            #     normalize=True,
+            #     replace=True,
+            # )
 
         if self.animation:
             anim = FuncAnimation(
@@ -114,6 +133,8 @@ class Instrument:
             )
             plt.show()
             plt.close()
+            self._audio_running = False
+            self._audio_thread.join()
         else:
             while True:
                 print(self.a, self.b)
@@ -131,17 +152,41 @@ class Instrument:
         elif msg.is_cc(2):
             self.a = value
 
+    def _play_audio(self) -> None:
+        def field_to_wave(x, y) -> tuple[float, float]:
+            r = np.sqrt(np.pow(x, 2) + np.pow(y, 2))
+            phi = np.atan2(x, y)
+            f = remap_range(phi, -np.pi, np.pi, 1, 2000)
+            amp = remap_range(r, 0, 0.6, 0, 1)
+            return f, amp
+
+        def update_freqs():
+            h_tot = self.model.total_fields()
+
+            for i, (x, y) in enumerate(h_tot):
+                freq, amp = field_to_wave(x, y)
+                wt.add_wave(i, freq, amp)
+
+        wt = wavetable.Wavetable(44150, len(self.model.all_indices()))  # magic
+        with wt:
+            update_freqs()
+
+            while self._audio_running:
+                if self.updated:
+                    with self.lock:
+                        update_freqs()
+                        self.updated = False
+                time.sleep(0.01)
+
 
 def main() -> None:
 
-    wt = wavetable.Wavetable(44100)
-    wt.add_wave(440, 1)
+    # wt = wavetable.Wavetable(44100)
+    # wt.add_wave(440, 1)
 
-    with wt:
-        time.sleep(1)
-        wt.add_wave(2 * 440, 0.7)
-        time.sleep(1)
-    return
+    # with wt:
+    #     time.sleep(5)
+    # return
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--dimension", type=int, default=8)
@@ -151,7 +196,7 @@ def main() -> None:
     parser.add_argument(
         "-i", "--input", choices=["joystick", "keyboard"], default="joystick"
     )
-    parser.add_argument("-a", "--animation", action="store_true", default=True)
+    parser.add_argument("-a", "--animation", action="store_true")
     args = parser.parse_args()
 
     dimension: int = args.dimension
