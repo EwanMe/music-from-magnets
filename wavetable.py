@@ -12,27 +12,18 @@ class Wavetable:
         self.lowest_freq: float | None = None
         self.N: int = 100000  # magic
         self._buffer = np.zeros(self.N)
-        self.playing = False
         self.waves = np.zeros((self.num_waves, self.N))
 
         slew_duration = 0.003
         self.slew_samples = int(slew_duration * self.sample_rate)
         self.hanning = np.hanning(2 * self.slew_samples)
 
-    def _play(self) -> None:
+    def __enter__(self) -> None:
         sd.default.device = 7  # magic
-        self.playing = True
         sd.play(self._buffer, samplerate=self.sample_rate, loop=True)
 
-    def __enter__(self) -> None:
-        self._play()
-
-    def _stop(self) -> None:
-        self.playing = False
-        sd.stop()
-
     def __exit__(self, exc_type, exc, tb) -> None:
-        self._stop()
+        sd.stop()
 
     def _get_summed_wave(self) -> npt.NDArray[np.float64]:
         return np.sum(self.waves, axis=0) / len(self.waves)

@@ -59,10 +59,18 @@ class Instrument:
             raise Exception("Invalid spin ice type: " + ice_type)
 
         if self.animation:
-            self.fig, self.ax = plt.subplots()
             self.model.set_h_ext([self.a, self.b])
-            self.model.plot()
-            # plot_vectors(self.model.pos, self.model.h_ext, normalize=True)
+
+            # Plot lattice
+            self.fig, (self.vec_ax, self.norm_ax) = plt.subplots(1, 2)
+            self.model.plot(ax=self.norm_ax)
+
+            # Plot vectors
+            self.grid = self.model.grid(cell_size=(1.5, 1.5))
+            self.UV = self.grid.add_values(self.model.vectors, method="sum")
+            x, y = self.grid.centers()
+            XY = np.column_stack([x, y])
+            plot_vectors(XY, self.UV, normalize=True, ax=self.vec_ax)
 
         if input_type == "joystick":
             device_name = next(
@@ -112,15 +120,18 @@ class Instrument:
                 yield self.model
 
         def _animate(model: SpinIce):
-            self.ax.set_title(str(model.h_ext[0]))
-            model.plot(ax=self.ax, replace=True)
-            # plot_vectors(
-            #     self.model.pos,
-            #     self.model.h_ext,
-            #     ax=self.ax,
-            #     normalize=True,
-            #     replace=True,
-            # )
+            self.vec_ax.set_title(str(model.h_ext[0]))
+
+            # Update lattice
+            model.plot(ax=self.norm_ax, replace=True)
+
+            # Update vectors
+            self.UV = self.grid.add_values(self.model.vectors, method="sum")
+            x, y = self.grid.centers()
+            XY = np.column_stack([x, y])
+            plot_vectors(
+                XY, self.UV, normalize=True, ax=self.vec_ax, replace=True
+            )
 
         if self.animation:
             anim = FuncAnimation(
@@ -141,8 +152,8 @@ class Instrument:
                 time.sleep(1)
 
     def _handle_midi(self, msg: mido.Message):
-        h_ext_min = -0.5
-        h_ext_max = 0.5
+        h_ext_min = -0.1
+        h_ext_max = 0.1
         midi_min = 0
         midi_max = 127
 
@@ -156,21 +167,20 @@ class Instrument:
         def field_to_wave(x, y) -> tuple[float, float]:
             r = np.sqrt(np.pow(x, 2) + np.pow(y, 2))
             phi = np.atan2(x, y)
-            f = remap_range(phi, -np.pi, np.pi, 1, 2000)
-            amp = remap_range(r, 0, 0.6, 0, 1)
+            f = remap_range(phi, -2 * np.pi, 2 * np.pi, 100, 1500)
+            amp = remap_range(r, 0, 4, 0, 1)
             return f, amp
 
         def update_freqs():
-            h_tot = self.model.total_fields()
-
-            for i, (x, y) in enumerate(h_tot):
+            for i, (x, y) in enumerate(self.UV.reshape(-1, 2)):
+                x = remap_range(x, 0, 4, -1, 1)
+                y = remap_range(y, 0, 4, -1, 1)
                 freq, amp = field_to_wave(x, y)
+                # Bug: amp above 1
                 wt.add_wave(i, freq, amp)
 
-        wt = wavetable.Wavetable(44150, len(self.model.all_indices()))  # magic
+        wt = wavetable.Wavetable(44150, np.prod(self.grid.size))
         with wt:
-            update_freqs()
-
             while self._audio_running:
                 if self.updated:
                     with self.lock:
@@ -180,14 +190,6 @@ class Instrument:
 
 
 def main() -> None:
-
-    # wt = wavetable.Wavetable(44100)
-    # wt.add_wave(440, 1)
-
-    # with wt:
-    #     time.sleep(5)
-    # return
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--dimension", type=int, default=8)
     parser.add_argument(
