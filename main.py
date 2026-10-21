@@ -47,6 +47,8 @@ class Instrument:
 
         self.a = 0.0
         self.b = 0.0
+        self.temperature = 0
+
         self.animation = animation
         self.lock = threading.Lock()
         self.updated = True
@@ -112,15 +114,16 @@ class Instrument:
         def _step():
             yield self.model
             while True:
-                # Update ext field here
                 self.model.set_h_ext([self.a, self.b])
+                self.model.set_temperature(self.temperature)
                 with self.lock:
                     self.updated = True
-                self.model.relax()
+                self.model.step()
                 yield self.model
 
         def _animate(model: SpinIce):
             self.vec_ax.set_title(str(model.h_ext[0]))
+            self.norm_ax.set_title(str(model.temperature))
 
             # Update lattice
             model.plot(ax=self.norm_ax, replace=True)
@@ -138,7 +141,7 @@ class Instrument:
                 self.fig,
                 _animate,
                 frames=_step(),
-                interval=30,
+                interval=1,
                 blit=False,
                 cache_frame_data=False,
             )
@@ -156,12 +159,18 @@ class Instrument:
         h_ext_max = 0.1
         midi_min = 0
         midi_max = 127
+        temp_min = 0
+        temp_max = 600
 
         value = remap_range(msg.value, midi_min, midi_max, h_ext_min, h_ext_max)
         if msg.is_cc(1):
             self.b = value
         elif msg.is_cc(2):
             self.a = value
+        elif msg.is_cc(11):
+            self.temperature = remap_range(
+                msg.value, midi_min, midi_max, temp_min, temp_max
+            )
 
     def _play_audio(self) -> None:
         def field_to_wave(x, y) -> tuple[float, float]:
