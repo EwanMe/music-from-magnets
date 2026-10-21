@@ -81,7 +81,8 @@ class Instrument:
                 if device["is_input"] is True
             )
             self.in_port: mido.ports.BaseInput = mido.open_input(
-                device_name, callback=self._handle_midi
+                "MPK Mini Mk II:MPK Mini Mk II MIDI 1 20:0",
+                callback=self._handle_midi,
             )
         elif input_type == "keyboard":
             keyboard.add_hotkey("up", self._on_press, [self.Arrow.UP])
@@ -176,7 +177,7 @@ class Instrument:
         def field_to_wave(x, y) -> tuple[float, float]:
             r = np.sqrt(np.pow(x, 2) + np.pow(y, 2))
             phi = np.atan2(x, y)
-            f = remap_range(phi, -2 * np.pi, 2 * np.pi, 100, 1500)
+            f = remap_range(phi, -2 * np.pi, 2 * np.pi, 400, 1000)
             amp = remap_range(r, 0, 4, 0, 1)
             return f, amp
 
