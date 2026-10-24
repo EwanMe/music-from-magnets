@@ -1,13 +1,23 @@
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
+from typing import Any
+
+
+def get_available_output_devices() -> list[tuple[int, Any]]:
+    return [
+        (i, device)
+        for i, device in enumerate(sd.query_devices())
+        if device["max_output_channels"] > 0
+    ]
 
 
 class Wavetable:
 
-    def __init__(self, sample_rate: int, num_waves: int) -> None:
+    def __init__(self, sample_rate: int, num_waves: int, device: int) -> None:
         self.sample_rate = sample_rate
         self.num_waves = num_waves
+        sd.default.device = device
 
         self.lowest_freq: float | None = None
         self.N: int = 100000  # magic
@@ -19,7 +29,6 @@ class Wavetable:
         self.hanning = np.hanning(2 * self.slew_samples)
 
     def __enter__(self) -> None:
-        sd.default.device = 7  # magic
         sd.play(self._buffer, samplerate=self.sample_rate, loop=True)
 
     def __exit__(self, exc_type, exc, tb) -> None:

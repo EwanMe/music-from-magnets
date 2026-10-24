@@ -16,6 +16,7 @@ import wavetable
 
 
 def remap_range(
+    # Doesn't handle value outside of range
     value: int | float,
     old_min: int | float,
     old_max: int | float,
@@ -42,6 +43,8 @@ class Instrument:
         ice_type: str,
         input_type: str,
         animation: bool,
+        use_opencl: bool,
+        disorder: float,
     ):
         plt.rcParams["animation.frame_format"] = "svg"
 
@@ -53,10 +56,15 @@ class Instrument:
         self.lock = threading.Lock()
         self.updated = True
 
+        asi_args = {
+            "size": (width, height),
+            "use_opencl": use_opencl,
+            "disorder": disorder,
+        }
         if ice_type == "pinwheel":
-            self.model = PinwheelSpinIceDiamond(size=(width, height))
+            self.model = PinwheelSpinIceDiamond(**asi_args)
         elif ice_type == "square":
-            self.model = SquareSpinIceClosed(size=(width, height))
+            self.model = SquareSpinIceClosed(**asi_args)
         else:
             raise Exception("Invalid spin ice type: " + ice_type)
 
@@ -75,14 +83,26 @@ class Instrument:
             plot_vectors(XY, self.UV, normalize=True, ax=self.vec_ax)
 
         if input_type == "joystick":
-            device_name = next(
+            devices = [
                 device["name"]
                 for device in mido.backends.rtmidi.get_devices()
                 if device["is_input"] is True
-            )
+            ]
+
+            dev_sel = 0
+            if len(devices) == 0:
+                raise Exception("No MIDI input devices found.")
+            if len(devices) > 1:
+                dev_list = [f"({i}) {d}" for i, d in enumerate(devices)]
+                dev_sel = int(
+                    input(
+                        "Multiple MIDI input devices found, please select one:\n"
+                        + "\n".join(dev_list)
+                        + "\n"
+                    )
+                )
             self.in_port: mido.ports.BaseInput = mido.open_input(
-                "MPK Mini Mk II:MPK Mini Mk II MIDI 1 20:0",
-                callback=self._handle_midi,
+                devices[dev_sel], callback=self._handle_midi
             )
         elif input_type == "keyboard":
             keyboard.add_hotkey("up", self._on_press, [self.Arrow.UP])
@@ -93,8 +113,24 @@ class Instrument:
         else:
             raise Exception("Invalid input type: " + input_type)
 
+        devices = wavetable.get_available_output_devices()
+        dev_sel = devices[0][0]
+        if len(devices) == 0:
+            raise Exception("No audio output devices found.")
+        if len(devices) > 1:
+            dev_name_list = [f"({i}) {device["name"]}" for i, device in devices]
+
+            dev_sel = int(
+                input(
+                    "Multiple audio output devices found, please select one:\n"
+                    + "\n".join(dev_name_list)
+                    + "\n"
+                )
+            )
         self._audio_running = True
-        self._audio_thread = threading.Thread(target=self._play_audio)
+        self._audio_thread = threading.Thread(
+            target=self._play_audio, args=(dev_sel,)
+        )
         self._audio_thread.start()
 
     def _flip_mag(self):
@@ -173,12 +209,12 @@ class Instrument:
                 msg.value, midi_min, midi_max, temp_min, temp_max
             )
 
-    def _play_audio(self) -> None:
+    def _play_audio(self, output_device: int) -> None:
         def field_to_wave(x, y) -> tuple[float, float]:
             r = np.sqrt(np.pow(x, 2) + np.pow(y, 2))
             phi = np.atan2(x, y)
             f = remap_range(phi, -2 * np.pi, 2 * np.pi, 400, 1000)
-            amp = remap_range(r, 0, 4, 0, 1)
+            amp = remap_range(r, 0, 4, 0, 0.8)
             return f, amp
 
         def update_freqs():
@@ -189,7 +225,9 @@ class Instrument:
                 # Bug: amp above 1
                 wt.add_wave(i, freq, amp)
 
-        wt = wavetable.Wavetable(44150, np.prod(self.grid.size))
+        wt = wavetable.Wavetable(
+            44150, np.prod(self.grid.size), device=output_device
+        )
         with wt:
             while self._audio_running:
                 if self.updated:
@@ -209,12 +247,16 @@ def main() -> None:
         "-i", "--input", choices=["joystick", "keyboard"], default="joystick"
     )
     parser.add_argument("-a", "--animation", action="store_true")
+    parser.add_argument("--disorder", type=float, default=0.05)
+    parser.add_argument("-cl", "--use-opencl", action="store_true")
     args = parser.parse_args()
 
     dimension: int = args.dimension
     ice_type: str = args.type
     input_type: str = args.input
     animation: bool = args.animation
+    disorder: float = args.disorder
+    use_opencl: bool = args.use_opencl
 
     Instrument(
         dimension,
@@ -222,6 +264,8 @@ def main() -> None:
         ice_type=ice_type,
         input_type=input_type,
         animation=animation,
+        use_opencl=use_opencl,
+        disorder=disorder,
     ).run()
 
 
