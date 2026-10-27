@@ -5,10 +5,13 @@ import sounddevice as sd
 
 class Wavetable:
 
-    def __init__(self, sample_rate: int, num_waves: int, device: int) -> None:
+    def __init__(
+        self, sample_rate: int, num_waves: int, device: int | None = None
+    ) -> None:
         self.sample_rate = sample_rate
         self.num_waves = num_waves
-        sd.default.device = device
+        if device:
+            sd.default.device = device
 
         self.lowest_freq: float | None = None
         self.N: int = 100000  # magic
@@ -28,13 +31,14 @@ class Wavetable:
     def _get_summed_wave(self) -> npt.NDArray[np.float64]:
         return np.sum(self.waves, axis=0) / len(self.waves)
 
-    def add_wave(self, index: int, frequency: float, amplitude: float) -> None:
-        if self.lowest_freq is None or frequency < self.lowest_freq:
-            self.lowest_freq = frequency
+    def add_waves(self, freqs: list[tuple[int, float, float]]) -> None:
+        # if self.lowest_freq is None or frequency < self.lowest_freq:
+        #     self.lowest_freq = frequency
 
-        self.waves[index] = amplitude * np.sin(
-            2 * np.pi * frequency * np.arange(self.N) / self.sample_rate
-        )
+        for index, frequency, amplitude in freqs:
+            self.waves[index] = amplitude * np.sin(
+                2 * np.pi * frequency * np.arange(self.N) / self.sample_rate
+            )
 
         summed_wave = self._get_summed_wave()
 

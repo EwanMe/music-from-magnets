@@ -222,7 +222,7 @@ class Instrument:
         for i, (x, y) in enumerate(self.UV.reshape(-1, 2)):
             x = remap_range(x, 0, 4, -1, 1)
             y = remap_range(y, 0, 4, -1, 1)
-            freq, amp = field_to_wave(x, y)
+            freq, amp = field_to_wave(i, x, y)
             freqs.append((i, freq, amp))
         return freqs
 
@@ -236,9 +236,7 @@ class Instrument:
             while self._running:
                 if self.updated:
                     with self.lock:
-                        freqs = self._get_freqs()
-                        for i, freq, amp in freqs:
-                            wt.add_wave(i, freq, amp)
+                        wt.add_waves(self._get_freqs())
                         self.updated = False
                 time.sleep(0.01)
 
