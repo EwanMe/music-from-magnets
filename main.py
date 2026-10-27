@@ -1,6 +1,7 @@
 import argparse
 import enum
 import json
+import random
 import socket
 import threading
 import time
@@ -49,9 +50,9 @@ class Instrument:
     ):
         plt.rcParams["animation.frame_format"] = "svg"
 
-        self.a = 0.0
-        self.b = 0.0
-        self.temperature = 0
+        self.x = 0.0
+        self.y = 0.0
+        self.noise = 0
 
         self.animation = animation
         self.lock = threading.Lock()
@@ -70,7 +71,7 @@ class Instrument:
         else:
             raise Exception("Invalid spin ice type: " + ice_type)
 
-        self.model.set_h_ext([self.a, self.b])
+        self.model.set_h_ext([self.x, self.y])
 
         # Plot lattice
         self.fig, (self.vec_ax, self.norm_ax) = plt.subplots(1, 2)
@@ -113,11 +114,19 @@ class Instrument:
             self._audio_thread.start()
 
     def run(self):
+        num_spins = self.model.N
+
+        def noisify(x: float) -> float:
+            return x + random.random() * self.noise
+
         def _step():
             yield self.model
             while True:
-                self.model.set_h_ext([self.a, self.b])
-                self.model.set_temperature(self.temperature)
+                v = [
+                    [noisify(self.x), noisify(self.y)] for _ in range(num_spins)
+                ]
+                self.model.set_h_ext(v)
+                self.model.set_temperature(self.noise)
                 with self.lock:
                     self.updated = True
                 self.model.relax()
@@ -180,17 +189,17 @@ class Instrument:
         h_ext_max = 0.1
         midi_min = 0
         midi_max = 127
-        temp_min = 0
-        temp_max = 600
+        noise_min = 0
+        noise_max = np.abs(h_ext_max)
 
         value = remap_range(msg.value, midi_min, midi_max, h_ext_min, h_ext_max)
         if msg.is_cc(1):
-            self.b = value
+            self.y = value
         elif msg.is_cc(2):
-            self.a = value
+            self.x = value
         elif msg.is_cc(11):
-            self.temperature = remap_range(
-                msg.value, midi_min, midi_max, temp_min, temp_max
+            self.noise = remap_range(
+                msg.value, midi_min, midi_max, noise_min, noise_max
             )
 
     def _send_audio_ctrl(self) -> None:
