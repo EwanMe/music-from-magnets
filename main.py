@@ -7,7 +7,6 @@ import time
 
 from flatspin.model import PinwheelSpinIceDiamond, SquareSpinIceClosed, SpinIce
 from flatspin.plotting import plot_vectors
-import keyboard
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import mido
@@ -39,15 +38,14 @@ class Instrument:
 
     def __init__(
         self,
+        *,
         width: int,
         height: int,
-        *,
         ice_type: str,
-        input_type: str,
         animation: bool,
         use_opencl: bool,
         disorder: float,
-        server: bool,
+        is_server: bool,
     ):
         plt.rcParams["animation.frame_format"] = "svg"
 
@@ -58,6 +56,7 @@ class Instrument:
         self.animation = animation
         self.lock = threading.Lock()
         self.updated = True
+        self.is_server = is_server
 
         asi_args = {
             "size": (width, height),
@@ -85,44 +84,30 @@ class Instrument:
             XY = np.column_stack([x, y])
             plot_vectors(XY, self.UV, normalize=True, ax=self.vec_ax)
 
-        if input_type == "joystick":
+        self._running = True
+        if self.is_server:
+            srv = socket.create_server(("127.0.0.1", 5555))
+            print("Waiting for connection")
+            self.conn, _ = srv.accept()
+            print("Connected")
+            self.conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+            self._midi_thread = threading.Thread(target=self._receive_midi)
+            self._midi_thread.start()
+
+            self._audio_thread = threading.Thread(target=self._send_audio_ctrl)
+            self._audio_thread.start()
+        else:
             self.in_port: mido.ports.BaseInput = mido.open_input(
                 utils.user_select_midi_device(), callback=self._handle_midi
             )
-        elif input_type == "keyboard":
-            keyboard.add_hotkey("up", self._on_press, [self.Arrow.UP])
-            keyboard.add_hotkey("down", self._on_press, [self.Arrow.DOWN])
-            keyboard.add_hotkey("left", self._on_press, [self.Arrow.LEFT])
-            keyboard.add_hotkey("right", self._on_press, [self.Arrow.RIGHT])
-            keyboard.add_hotkey("space", self._flip_mag)
-        else:
-            raise Exception("Invalid input type: " + input_type)
 
-        self._audio_running = True
-        if server:
-            self._audio_thread = threading.Thread(target=self._send_control)
-            self._audio_thread.start()
-        else:
             # User interaction for device selection must happen outside thread
             self._audio_thread = threading.Thread(
                 target=self._play_audio,
                 args=(utils.user_select_sound_device(),),
             )
             self._audio_thread.start()
-
-    def _flip_mag(self):
-        self.model.polarize()
-
-    def _on_press(self, key: Arrow):
-        match key:
-            case self.Arrow.UP:
-                self.a = 0.5
-            case self.Arrow.DOWN:
-                self.a = -0.5
-            case self.Arrow.LEFT:
-                self.b = -0.5
-            case self.Arrow.RIGHT:
-                self.b = 0.5
 
     def run(self):
         def _step():
@@ -161,12 +146,28 @@ class Instrument:
             )
             plt.show()
             plt.close()
-            self._audio_running = False
+            self._running = False
             self._audio_thread.join()
+            if self.is_server:
+                self._midi_thread.join()
         else:
             while True:
                 print(self.a, self.b)
                 time.sleep(1)
+
+    def _receive_midi(self):
+        sock_file = self.conn.makefile()
+
+        while self._running:
+            # This line blocks and prevents thread join
+            raw = json.loads(sock_file.readline())
+            msg = mido.Message(
+                type=raw["type"],
+                control=raw["control"],
+                value=raw["value"],
+                channel=raw["channel"],
+            )
+            self._handle_midi(msg)
 
     def _handle_midi(self, msg: mido.Message):
         h_ext_min = -0.1
@@ -186,16 +187,11 @@ class Instrument:
                 msg.value, midi_min, midi_max, temp_min, temp_max
             )
 
-    def _send_control(self) -> None:
-        srv = socket.create_server(("127.0.0.1", 5555))
-        conn, _ = srv.accept()
-        print("Connected")
-        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-        while self._audio_running:
+    def _send_audio_ctrl(self) -> None:
+        while self._running:
             if self.updated:
                 with self.lock:
-                    conn.sendall(
+                    self.conn.sendall(
                         (json.dumps(self._get_freqs()) + "\n").encode()
                     )
 
@@ -220,7 +216,7 @@ class Instrument:
             44150, np.prod(self.grid.size), device=output_device
         )
         with wt:
-            while self._audio_running:
+            while self._running:
                 if self.updated:
                     with self.lock:
                         freqs = self._get_freqs()
@@ -236,9 +232,6 @@ def main() -> None:
     parser.add_argument(
         "-t", "--type", choices=["pinwheel", "square"], default="pinwheel"
     )
-    parser.add_argument(
-        "-i", "--input", choices=["joystick", "keyboard"], default="joystick"
-    )
     parser.add_argument("-a", "--animation", action="store_true")
     parser.add_argument("--disorder", type=float, default=0.05)
     parser.add_argument("-cl", "--use-opencl", action="store_true")
@@ -247,21 +240,19 @@ def main() -> None:
 
     dimension: int = args.dimension
     ice_type: str = args.type
-    input_type: str = args.input
     animation: bool = args.animation
     disorder: float = args.disorder
     use_opencl: bool = args.use_opencl
-    server: bool = args.server
+    is_server: bool = args.server
 
     Instrument(
-        dimension,
-        dimension,
+        width=dimension,
+        height=dimension,
         ice_type=ice_type,
-        input_type=input_type,
         animation=animation,
         use_opencl=use_opencl,
         disorder=disorder,
-        server=server,
+        is_server=is_server,
     ).run()
 
 

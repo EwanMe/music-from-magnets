@@ -18,7 +18,6 @@ packet = (0, 0, 0)
 
 def send_midi():
     with mido.open_input(utils.user_select_midi_device()) as port:
-        print("Connected to MIDI stream")
         for msg in port:
             s.sendall((json.dumps(msg.dict()) + "\n").encode())
 
@@ -35,7 +34,7 @@ def receive_updates():
             updated = True
 
 
-# threading.Thread(target=send_midi, daemon=True).start()
+threading.Thread(target=send_midi, daemon=True).start()
 threading.Thread(target=receive_updates, daemon=True).start()
 
 size = 16
