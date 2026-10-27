@@ -7,13 +7,13 @@ import time
 
 from flatspin.model import PinwheelSpinIceDiamond, SquareSpinIceClosed, SpinIce
 from flatspin.plotting import plot_vectors
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import mido
 import numpy as np
 
-import utils
-import wavetable
+matplotlib.use("TkAgg")
 
 
 def remap_range(
@@ -70,18 +70,19 @@ class Instrument:
         else:
             raise Exception("Invalid spin ice type: " + ice_type)
 
+        self.model.set_h_ext([self.a, self.b])
+
+        # Plot lattice
+        self.fig, (self.vec_ax, self.norm_ax) = plt.subplots(1, 2)
+
+        # Plot vectors
+        self.grid = self.model.grid(cell_size=(1.5, 1.5))
+        self.UV = self.grid.add_values(self.model.vectors, method="sum")
+        x, y = self.grid.centers()
+        XY = np.column_stack([x, y])
+
         if self.animation:
-            self.model.set_h_ext([self.a, self.b])
-
-            # Plot lattice
-            self.fig, (self.vec_ax, self.norm_ax) = plt.subplots(1, 2)
             self.model.plot(ax=self.norm_ax)
-
-            # Plot vectors
-            self.grid = self.model.grid(cell_size=(1.5, 1.5))
-            self.UV = self.grid.add_values(self.model.vectors, method="sum")
-            x, y = self.grid.centers()
-            XY = np.column_stack([x, y])
             plot_vectors(XY, self.UV, normalize=True, ax=self.vec_ax)
 
         self._running = True
@@ -98,6 +99,8 @@ class Instrument:
             self._audio_thread = threading.Thread(target=self._send_audio_ctrl)
             self._audio_thread.start()
         else:
+            import utils
+
             self.in_port: mido.ports.BaseInput = mido.open_input(
                 utils.user_select_midi_device(), callback=self._handle_midi
             )
@@ -135,39 +138,42 @@ class Instrument:
                 XY, self.UV, normalize=True, ax=self.vec_ax, replace=True
             )
 
+        anim = FuncAnimation(
+            self.fig,
+            _animate,
+            frames=_step(),
+            interval=1,
+            blit=False,
+            cache_frame_data=False,
+        )
         if self.animation:
-            anim = FuncAnimation(
-                self.fig,
-                _animate,
-                frames=_step(),
-                interval=1,
-                blit=False,
-                cache_frame_data=False,
-            )
             plt.show()
             plt.close()
-            self._running = False
-            self._audio_thread.join()
-            if self.is_server:
-                self._midi_thread.join()
-        else:
-            while True:
-                print(self.a, self.b)
-                time.sleep(1)
+
+        self._running = False
+        if self.is_server:
+            self.conn.shutdown(socket.SHUT_RDWR)
+            self._midi_thread.join()
+        self._audio_thread.join()
 
     def _receive_midi(self):
-        sock_file = self.conn.makefile()
+        # Set timeout to handle thread teardown
+        # self.conn.settimeout(2)
 
         while self._running:
             # This line blocks and prevents thread join
-            raw = json.loads(sock_file.readline())
-            msg = mido.Message(
-                type=raw["type"],
-                control=raw["control"],
-                value=raw["value"],
-                channel=raw["channel"],
-            )
-            self._handle_midi(msg)
+            try:
+                sock_file = self.conn.makefile()
+                raw = json.loads(sock_file.readline())
+                msg = mido.Message(
+                    type=raw["type"],
+                    control=raw["control"],
+                    value=raw["value"],
+                    channel=raw["channel"],
+                )
+                self._handle_midi(msg)
+            except socket.timeout:
+                continue
 
     def _handle_midi(self, msg: mido.Message):
         h_ext_min = -0.1
@@ -212,8 +218,10 @@ class Instrument:
         return freqs
 
     def _play_audio(self, output_device: int) -> None:
+        import wavetable
+
         wt = wavetable.Wavetable(
-            44150, np.prod(self.grid.size), device=output_device
+            44100, np.prod(self.grid.size), device=output_device
         )
         with wt:
             while self._running:

@@ -49,3 +49,5 @@ def user_select_sound_device():
                 + "\n"
             )
         )
+
+    return dev_sel

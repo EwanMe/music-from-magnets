@@ -37,8 +37,8 @@ def receive_updates():
 threading.Thread(target=send_midi, daemon=True).start()
 threading.Thread(target=receive_updates, daemon=True).start()
 
-size = 16
-wt = wavetable.Wavetable(44150, size, device=utils.user_select_sound_device())
+size = 16 * 16
+wt = wavetable.Wavetable(44100, size, device=utils.user_select_sound_device())
 with wt:
     while True:
         if updated:
