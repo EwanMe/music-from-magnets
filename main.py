@@ -1,5 +1,7 @@
 import argparse
 import enum
+import json
+import socket
 import threading
 import time
 
@@ -8,10 +10,10 @@ from flatspin.plotting import plot_vectors
 import keyboard
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-import mido.backends.rtmidi
 import mido
 import numpy as np
 
+import utils
 import wavetable
 
 
@@ -45,6 +47,7 @@ class Instrument:
         animation: bool,
         use_opencl: bool,
         disorder: float,
+        server: bool,
     ):
         plt.rcParams["animation.frame_format"] = "svg"
 
@@ -83,26 +86,8 @@ class Instrument:
             plot_vectors(XY, self.UV, normalize=True, ax=self.vec_ax)
 
         if input_type == "joystick":
-            devices = [
-                device["name"]
-                for device in mido.backends.rtmidi.get_devices()
-                if device["is_input"] is True
-            ]
-
-            dev_sel = 0
-            if len(devices) == 0:
-                raise Exception("No MIDI input devices found.")
-            if len(devices) > 1:
-                dev_list = [f"({i}) {d}" for i, d in enumerate(devices)]
-                dev_sel = int(
-                    input(
-                        "Multiple MIDI input devices found, please select one:\n"
-                        + "\n".join(dev_list)
-                        + "\n"
-                    )
-                )
             self.in_port: mido.ports.BaseInput = mido.open_input(
-                devices[dev_sel], callback=self._handle_midi
+                utils.user_select_midi_device(), callback=self._handle_midi
             )
         elif input_type == "keyboard":
             keyboard.add_hotkey("up", self._on_press, [self.Arrow.UP])
@@ -113,25 +98,17 @@ class Instrument:
         else:
             raise Exception("Invalid input type: " + input_type)
 
-        devices = wavetable.get_available_output_devices()
-        dev_sel = devices[0][0]
-        if len(devices) == 0:
-            raise Exception("No audio output devices found.")
-        if len(devices) > 1:
-            dev_name_list = [f"({i}) {device["name"]}" for i, device in devices]
-
-            dev_sel = int(
-                input(
-                    "Multiple audio output devices found, please select one:\n"
-                    + "\n".join(dev_name_list)
-                    + "\n"
-                )
-            )
         self._audio_running = True
-        self._audio_thread = threading.Thread(
-            target=self._play_audio, args=(dev_sel,)
-        )
-        self._audio_thread.start()
+        if server:
+            self._audio_thread = threading.Thread(target=self._send_control)
+            self._audio_thread.start()
+        else:
+            # User interaction for device selection must happen outside thread
+            self._audio_thread = threading.Thread(
+                target=self._play_audio,
+                args=(utils.user_select_sound_device(),),
+            )
+            self._audio_thread.start()
 
     def _flip_mag(self):
         self.model.polarize()
@@ -155,7 +132,7 @@ class Instrument:
                 self.model.set_temperature(self.temperature)
                 with self.lock:
                     self.updated = True
-                self.model.step()
+                self.model.relax()
                 yield self.model
 
         def _animate(model: SpinIce):
@@ -209,7 +186,20 @@ class Instrument:
                 msg.value, midi_min, midi_max, temp_min, temp_max
             )
 
-    def _play_audio(self, output_device: int) -> None:
+    def _send_control(self) -> None:
+        srv = socket.create_server(("127.0.0.1", 5555))
+        conn, _ = srv.accept()
+        print("Connected")
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+        while self._audio_running:
+            if self.updated:
+                with self.lock:
+                    conn.sendall(
+                        (json.dumps(self._get_freqs()) + "\n").encode()
+                    )
+
+    def _get_freqs(self) -> list[tuple[int, float, float]]:
         def field_to_wave(x, y) -> tuple[float, float]:
             r = np.sqrt(np.pow(x, 2) + np.pow(y, 2))
             phi = np.atan2(x, y)
@@ -217,14 +207,15 @@ class Instrument:
             amp = remap_range(r, 0, 4, 0, 0.8)
             return f, amp
 
-        def update_freqs():
-            for i, (x, y) in enumerate(self.UV.reshape(-1, 2)):
-                x = remap_range(x, 0, 4, -1, 1)
-                y = remap_range(y, 0, 4, -1, 1)
-                freq, amp = field_to_wave(x, y)
-                # Bug: amp above 1
-                wt.add_wave(i, freq, amp)
+        freqs: list[tuple[int, float, float]] = []
+        for i, (x, y) in enumerate(self.UV.reshape(-1, 2)):
+            x = remap_range(x, 0, 4, -1, 1)
+            y = remap_range(y, 0, 4, -1, 1)
+            freq, amp = field_to_wave(x, y)
+            freqs.append((i, freq, amp))
+        return freqs
 
+    def _play_audio(self, output_device: int) -> None:
         wt = wavetable.Wavetable(
             44150, np.prod(self.grid.size), device=output_device
         )
@@ -232,7 +223,9 @@ class Instrument:
             while self._audio_running:
                 if self.updated:
                     with self.lock:
-                        update_freqs()
+                        freqs = self._get_freqs()
+                        for i, freq, amp in freqs:
+                            wt.add_wave(i, freq, amp)
                         self.updated = False
                 time.sleep(0.01)
 
@@ -249,6 +242,7 @@ def main() -> None:
     parser.add_argument("-a", "--animation", action="store_true")
     parser.add_argument("--disorder", type=float, default=0.05)
     parser.add_argument("-cl", "--use-opencl", action="store_true")
+    parser.add_argument("-s", "--server", action="store_true")
     args = parser.parse_args()
 
     dimension: int = args.dimension
@@ -257,6 +251,7 @@ def main() -> None:
     animation: bool = args.animation
     disorder: float = args.disorder
     use_opencl: bool = args.use_opencl
+    server: bool = args.server
 
     Instrument(
         dimension,
@@ -266,6 +261,7 @@ def main() -> None:
         animation=animation,
         use_opencl=use_opencl,
         disorder=disorder,
+        server=server,
     ).run()
 
 

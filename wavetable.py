@@ -1,15 +1,6 @@
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
-from typing import Any
-
-
-def get_available_output_devices() -> list[tuple[int, Any]]:
-    return [
-        (i, device)
-        for i, device in enumerate(sd.query_devices())
-        if device["max_output_channels"] > 0
-    ]
 
 
 class Wavetable:
