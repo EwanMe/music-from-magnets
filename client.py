@@ -44,6 +44,6 @@ with wt:
         if updated:
             with lock:
                 for i, freq, amp in packet:
-                    wt.add_wave(i, freq, amp)
+                    wt.add_waves(i, freq, amp)
                 updated = False
         time.sleep(0.01)

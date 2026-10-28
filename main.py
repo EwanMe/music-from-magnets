@@ -30,12 +30,13 @@ def remap_range(
     )
 
 
+def cart_to_polar(x, y) -> tuple[float, float]:
+    r = np.sqrt(np.pow(x, 2) + np.pow(y, 2))
+    phi = np.atan2(y, x)
+    return r, phi
+
+
 class Instrument:
-    class Arrow(enum.Enum):
-        UP = 1
-        DOWN = 2
-        LEFT = 3
-        RIGHT = 4
 
     def __init__(
         self,
@@ -133,8 +134,9 @@ class Instrument:
                 yield self.model
 
         def _animate(model: SpinIce):
-            self.vec_ax.set_title(str(model.h_ext[0]))
-            self.norm_ax.set_title(str(model.temperature))
+            r, phi = cart_to_polar(*(model.h_ext[0]))
+            self.vec_ax.set_title(f"r={r:.3f}, phi={phi:.3f}")
+            self.norm_ax.set_title(f"noise={self.noise:.5f}")
 
             # Update lattice
             model.plot(ax=self.norm_ax, replace=True)
@@ -185,8 +187,8 @@ class Instrument:
                 continue
 
     def _handle_midi(self, msg: mido.Message):
-        h_ext_min = -0.1
-        h_ext_max = 0.1
+        h_ext_min = -0.08
+        h_ext_max = 0.08
         midi_min = 0
         midi_max = 127
         noise_min = 0
@@ -211,12 +213,79 @@ class Instrument:
                     )
 
     def _get_freqs(self) -> list[tuple[int, float, float]]:
-        def field_to_wave(x, y) -> tuple[float, float]:
-            r = np.sqrt(np.pow(x, 2) + np.pow(y, 2))
-            phi = np.atan2(x, y)
-            f = remap_range(phi, -2 * np.pi, 2 * np.pi, 400, 1000)
+        def field_to_wave(i: int, x: float, y: float) -> tuple[float, float]:
+            r, phi = cart_to_polar(x, y)
+
+            freq = (
+                scale[int(remap_range(phi, -np.pi, np.pi, 0, scale_len))]
+                * (i + 1)
+                * 0.5
+            )
             amp = remap_range(r, 0, 4, 0, 0.8)
-            return f, amp
+            return freq, amp
+
+        c_maj = [
+            261.6256,  # C
+            293.6648,  # D
+            329.6276,  # E
+            349.2282,  # F
+            391.9954,  # G
+            440.0000,  # A
+            493.8833,  # B
+        ]
+        c_maj_by_fifths = [
+            261.6256,  # C
+            391.9954,  # G
+            293.6648,  # D
+            440.0000,  # A
+            329.6276,  # E
+            493.8833,  # B
+            349.2282,  # F
+        ]
+        c_min_by_fifths = [
+            261.6256,  # C
+            391.9954,  # G
+            293.6648,  # D
+            415.3047,  # Ab
+            311.1270,  # Eb
+            466.1638,  # Bb
+            349.2282,  # F
+        ]
+        c_doric_by_fifths = [
+            261.6256,  # C
+            391.9954,  # G
+            293.6648,  # D
+            415.3047,  # Ab
+            311.1270,  # Eb
+            493.8833,  # B
+            349.2282,  # F
+        ]
+        # Circle of fifths, only major key ring tonics
+        fifths = [
+            261.6256,  # C
+            391.9954,  # G
+            293.6648,  # D
+            440.0000,  # A
+            329.6276,  # E
+            493.8833,  # B
+            369.9944,  # F♯
+            277.1826,  # C♯
+        ]
+        # Circle of fourths, only major key ring tonics
+        fourths = [
+            261.6256,  # C
+            349.2282,  # F
+            466.1638,  # Bb
+            311.1270,  # Eb
+            415.3047,  # Ab
+            277.1826,  # Db
+            369.9944,  # Gb
+        ]
+
+        scale = c_doric_by_fifths
+        scale_len = len(scale)
+
+        r, _ = cart_to_polar(*(self.model.h_ext[0]))
 
         freqs: list[tuple[int, float, float]] = []
         for i, (x, y) in enumerate(self.UV.reshape(-1, 2)):

@@ -20,7 +20,7 @@ def user_select_midi_device():
             input(
                 "Multiple MIDI input devices found, please select one:\n"
                 + "\n".join(dev_list)
-                + "\n"
+                + "\nEnter selection: "
             )
         )
     return devices[dev_sel]
@@ -46,7 +46,7 @@ def user_select_sound_device():
             input(
                 "Multiple audio output devices found, please select one:\n"
                 + "\n".join(dev_name_list)
-                + "\n"
+                + "\nEnter selection: "
             )
         )
 
