@@ -48,6 +48,7 @@ class Instrument:
         use_opencl: bool,
         disorder: float,
         is_server: bool,
+        use_default_devices: bool,
     ):
         plt.rcParams["animation.frame_format"] = "svg"
 
@@ -103,14 +104,19 @@ class Instrument:
         else:
             import utils
 
+            midi_dev = None
+            audio_dev = None
+            if not use_default_devices:
+                midi_dev = utils.user_select_midi_device()
+                audio_dev = utils.user_select_sound_device()
+
             self.in_port: mido.ports.BaseInput = mido.open_input(
-                utils.user_select_midi_device(), callback=self._handle_midi
+                midi_dev, callback=self._handle_midi
             )
 
             # User interaction for device selection must happen outside thread
             self._audio_thread = threading.Thread(
-                target=self._play_audio,
-                args=(utils.user_select_sound_device(),),
+                target=self._play_audio, args=(audio_dev,)
             )
             self._audio_thread.start()
 
@@ -320,6 +326,7 @@ def main() -> None:
     parser.add_argument("--disorder", type=float, default=0.05)
     parser.add_argument("-cl", "--use-opencl", action="store_true")
     parser.add_argument("-s", "--server", action="store_true")
+    parser.add_argument("-dd", "--default-devices", action="store_true")
     args = parser.parse_args()
 
     dimension: int = args.dimension
@@ -328,6 +335,7 @@ def main() -> None:
     disorder: float = args.disorder
     use_opencl: bool = args.use_opencl
     is_server: bool = args.server
+    use_default_devices: bool = args.default_devices
 
     Instrument(
         width=dimension,
@@ -337,6 +345,7 @@ def main() -> None:
         use_opencl=use_opencl,
         disorder=disorder,
         is_server=is_server,
+        use_default_devices=use_default_devices,
     ).run()
 
 
