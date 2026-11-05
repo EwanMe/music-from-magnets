@@ -1,5 +1,4 @@
 import argparse
-import enum
 import json
 import random
 import socket
@@ -8,7 +7,9 @@ import time
 
 from flatspin.model import PinwheelSpinIceDiamond, SquareSpinIceClosed, SpinIce
 from flatspin.plotting import plot_vectors
+import flatspin.plotting
 import matplotlib
+import matplotlib.axes
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import mido
@@ -44,19 +45,20 @@ class Instrument:
         width: int,
         height: int,
         ice_type: str,
-        animation: bool,
         use_opencl: bool,
         disorder: float,
         is_server: bool,
         use_default_devices: bool,
-    ):
+        scale: dict[str, float],
+        plot_scale: bool,
+        plots: str,
+    ) -> None:
         plt.rcParams["animation.frame_format"] = "svg"
 
         self.x = 0.0
         self.y = 0.0
         self.noise = 0
 
-        self.animation = animation
         self.lock = threading.Lock()
         self.updated = True
         self.is_server = is_server
@@ -73,10 +75,20 @@ class Instrument:
         else:
             raise Exception("Invalid spin ice type: " + ice_type)
 
+        self.scale_len = len(scale)
+        self.name_scale = list(scale.keys())
+        self.freq_scale = list(scale.values())
+        self.plots = plots
+        self.plot_scale = plot_scale
+
         self.model.set_h_ext([self.x, self.y])
 
-        # Plot lattice
-        self.fig, (self.vec_ax, self.norm_ax) = plt.subplots(1, 2)
+        if self.plots == "vector":
+            self.fig, self.vec_ax = plt.subplots()
+        elif self.plots == "both":
+            self.fig, (self.vec_ax, self.norm_ax) = plt.subplots(1, 2)
+        else:
+            raise Exception("Unknown plot type: " + self.plots)
 
         # Plot vectors
         self.grid = self.model.grid(cell_size=(1.5, 1.5))
@@ -84,9 +96,35 @@ class Instrument:
         x, y = self.grid.centers()
         XY = np.column_stack([x, y])
 
-        if self.animation:
+        if self.plots == "both":
+            # Plot lattice
             self.model.plot(ax=self.norm_ax)
             plot_vectors(XY, self.UV, normalize=True, ax=self.vec_ax)
+
+        if self.plot_scale:
+            c0, c1 = self.grid.centers()
+
+            start_deg = -180
+            centering = 0.5
+            theta = np.deg2rad(
+                start_deg
+                + (np.arange(self.scale_len) + centering) * 360 / self.scale_len
+            )
+            colors = flatspin.plotting.vector_rgba(np.cos(theta), np.sin(theta))
+
+            vec_ax: matplotlib.axes.Axes = self.vec_ax
+            vec_ax.pie(
+                [1] * self.scale_len,
+                center=(c0[len(c0) // 2], c1[len(c1) // 2]),
+                startangle=start_deg,
+                colors=colors,
+                counterclock=True,
+                radius=1,
+                wedgeprops=dict(width=0.3),
+                labels=scale.keys(),
+                labeldistance=0.85,
+                textprops={"fontsize": 20},
+            )
 
         self._running = True
         if self.is_server:
@@ -141,11 +179,15 @@ class Instrument:
 
         def _animate(model: SpinIce):
             r, phi = cart_to_polar(self.x, self.y)
-            self.vec_ax.set_title(f"r={r:.3f}, phi={phi:.3f}")
-            self.norm_ax.set_title(f"noise={self.noise:.5f}")
 
-            # Update lattice
-            model.plot(ax=self.norm_ax, replace=True)
+            if self.plots == "both":
+                self.norm_ax.set_title(f"noise={self.noise:.5f}")
+
+                # Update lattice
+                model.plot(ax=self.norm_ax, replace=True)
+
+            if not self.plot_scale:
+                self.vec_ax.set_title(f"r={r:.3f}, phi={phi:.3f}")
 
             # Update vectors
             self.UV = self.grid.add_values(self.model.vectors, method="sum")
@@ -163,9 +205,9 @@ class Instrument:
             blit=False,
             cache_frame_data=False,
         )
-        if self.animation:
-            plt.show()
-            plt.close()
+
+        plt.show()
+        plt.close()
 
         self._running = False
         if self.is_server:
@@ -193,14 +235,15 @@ class Instrument:
                 continue
 
     def _handle_midi(self, msg: mido.Message):
-        h_ext_min = -0.08
         h_ext_max = 0.08
         midi_min = 0
         midi_max = 127
         noise_min = 0
         noise_max = np.abs(h_ext_max)
 
-        value = remap_range(msg.value, midi_min, midi_max, h_ext_min, h_ext_max)
+        value = remap_range(
+            msg.value, midi_min, midi_max, -h_ext_max, h_ext_max
+        )
         if msg.is_cc(1):
             self.y = value
         elif msg.is_cc(2):
@@ -222,81 +265,17 @@ class Instrument:
         def field_to_wave(i: int, x: float, y: float) -> tuple[float, float]:
             r, phi = cart_to_polar(x, y)
 
-            freq = (
-                scale[int(remap_range(phi, -np.pi, np.pi, 0, scale_len))]
-                * (i + 1)
-                * 0.5
+            # Map phi from radians to an index in the scale notes array
+            idx = int(
+                np.floor(remap_range(phi, -np.pi, np.pi, 0, self.scale_len))
+                % self.scale_len
             )
+            freq = self.freq_scale[idx]
             amp = remap_range(r, 0, 4, 0, 0.8)
             return freq, amp
 
-        c_maj = [
-            261.6256,  # C
-            293.6648,  # D
-            329.6276,  # E
-            349.2282,  # F
-            391.9954,  # G
-            440.0000,  # A
-            493.8833,  # B
-        ]
-        c_maj_by_fifths = [
-            261.6256,  # C
-            391.9954,  # G
-            293.6648,  # D
-            440.0000,  # A
-            329.6276,  # E
-            493.8833,  # B
-            349.2282,  # F
-        ]
-        c_min_by_fifths = [
-            261.6256,  # C
-            391.9954,  # G
-            293.6648,  # D
-            415.3047,  # Ab
-            311.1270,  # Eb
-            466.1638,  # Bb
-            349.2282,  # F
-        ]
-        c_doric_by_fifths = [
-            261.6256,  # C
-            391.9954,  # G
-            293.6648,  # D
-            415.3047,  # Ab
-            311.1270,  # Eb
-            493.8833,  # B
-            349.2282,  # F
-        ]
-        # Circle of fifths, only major key ring tonics
-        fifths = [
-            261.6256,  # C
-            391.9954,  # G
-            293.6648,  # D
-            440.0000,  # A
-            329.6276,  # E
-            493.8833,  # B
-            369.9944,  # F♯
-            277.1826,  # C♯
-        ]
-        # Circle of fourths, only major key ring tonics
-        fourths = [
-            261.6256,  # C
-            349.2282,  # F
-            466.1638,  # Bb
-            311.1270,  # Eb
-            415.3047,  # Ab
-            277.1826,  # Db
-            369.9944,  # Gb
-        ]
-
-        scale = c_maj
-        scale_len = len(scale)
-
-        r, _ = cart_to_polar(*(self.model.h_ext[0]))
-
         freqs: list[tuple[int, float, float]] = []
         for i, (x, y) in enumerate(self.UV.reshape(-1, 2)):
-            x = remap_range(x, 0, 4, -1, 1)
-            y = remap_range(y, 0, 4, -1, 1)
             freq, amp = field_to_wave(i, x, y)
             freqs.append((i, freq, amp))
         return freqs
@@ -317,35 +296,97 @@ class Instrument:
 
 
 def main() -> None:
+    c_maj = {
+        "C": 261.6256,
+        "D": 293.6648,
+        "E": 329.6276,
+        "F": 349.2282,
+        "G": 391.9954,
+        "A": 440.0000,
+        "B": 493.8833,
+    }
+    c_maj_by_fifths = {
+        "C": 261.6256,
+        "G": 391.9954,
+        "D": 293.6648,
+        "A": 440.0000,
+        "E": 329.6276,
+        "B": 493.8833,
+        "F": 349.2282,
+    }
+    c_min_by_fifths = {
+        "C": 261.6256,
+        "G": 391.9954,
+        "D": 293.6648,
+        "Ab": 415.3047,
+        "Eb": 311.1270,
+        "Bb": 466.1638,
+        "F": 349.2282,
+    }
+    c_doric_by_fifths = {
+        "C": 261.6256,
+        "G": 391.9954,
+        "D": 293.6648,
+        "Ab": 415.3047,
+        "Eb": 311.1270,
+        "B": 493.8833,
+        "F": 349.2282,
+    }
+    # Circle of fifths, only major key ring tonics
+    fifths = {
+        "C": 261.6256,
+        "G": 391.9954,
+        "D": 293.6648,
+        "A": 440.0000,
+        "E": 329.6276,
+        "B": 493.8833,
+        "F♯": 369.9944,
+        "C♯": 277.1826,
+    }
+    # Circle of fourths, only major key ring tonics
+    fourths = {
+        "C": 261.6256,
+        "F": 349.2282,
+        "Bb": 466.1638,
+        "Eb": 311.1270,
+        "Ab": 415.3047,
+        "Db": 277.1826,
+        "Gb": 369.9944,
+    }
+
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--dimension", type=int, default=8)
     parser.add_argument(
         "-t", "--type", choices=["pinwheel", "square"], default="pinwheel"
     )
-    parser.add_argument("-a", "--animation", action="store_true")
     parser.add_argument("--disorder", type=float, default=0.05)
     parser.add_argument("-cl", "--use-opencl", action="store_true")
     parser.add_argument("-s", "--server", action="store_true")
     parser.add_argument("-dd", "--default-devices", action="store_true")
+    parser.add_argument("--plot-scale", action="store_true")
+    parser.add_argument("--plots", choices=["vector", "both"], default="both")
     args = parser.parse_args()
 
     dimension: int = args.dimension
     ice_type: str = args.type
-    animation: bool = args.animation
     disorder: float = args.disorder
     use_opencl: bool = args.use_opencl
     is_server: bool = args.server
     use_default_devices: bool = args.default_devices
+    plot_scale: bool = args.plot_scale
+    plots: str = args.plots
 
     Instrument(
         width=dimension,
         height=dimension,
         ice_type=ice_type,
-        animation=animation,
         use_opencl=use_opencl,
         disorder=disorder,
         is_server=is_server,
         use_default_devices=use_default_devices,
+        scale=c_maj_by_fifths,
+        plot_scale=plot_scale,
+        plots=plots,
     ).run()
 
 
