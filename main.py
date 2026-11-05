@@ -140,7 +140,7 @@ class Instrument:
                 yield self.model
 
         def _animate(model: SpinIce):
-            r, phi = cart_to_polar(*(model.h_ext[0]))
+            r, phi = cart_to_polar(self.x, self.y)
             self.vec_ax.set_title(f"r={r:.3f}, phi={phi:.3f}")
             self.norm_ax.set_title(f"noise={self.noise:.5f}")
 
@@ -288,7 +288,7 @@ class Instrument:
             369.9944,  # Gb
         ]
 
-        scale = c_doric_by_fifths
+        scale = c_maj
         scale_len = len(scale)
 
         r, _ = cart_to_polar(*(self.model.h_ext[0]))
