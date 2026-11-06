@@ -1,4 +1,4 @@
-import argparse
+import configargparse
 import json
 import random
 import socket
@@ -354,7 +354,8 @@ def main() -> None:
         "Gb": 369.9944,
     }
 
-    parser = argparse.ArgumentParser()
+    parser = configargparse.ArgParser()
+    parser.add_argument("-c", "--config-file", is_config_file=True)
     parser.add_argument("-d", "--dimension", type=int, default=8)
     parser.add_argument(
         "-t", "--type", choices=["pinwheel", "square"], default="pinwheel"
