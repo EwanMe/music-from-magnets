@@ -1,9 +1,12 @@
 import configargparse
 import json
+import os
+from pathlib import Path
 import random
 import socket
 import threading
 import time
+import sys
 
 from flatspin.model import PinwheelSpinIceDiamond, SquareSpinIceClosed, SpinIce
 from flatspin.plotting import plot_vectors
@@ -102,8 +105,6 @@ class Instrument:
             plot_vectors(XY, self.UV, normalize=True, ax=self.vec_ax)
 
         if self.plot_scale:
-            c0, c1 = self.grid.centers()
-
             start_deg = -180
             centering = 0.5
             theta = np.deg2rad(
@@ -112,18 +113,23 @@ class Instrument:
             )
             colors = flatspin.plotting.vector_rgba(np.cos(theta), np.sin(theta))
 
-            vec_ax: matplotlib.axes.Axes = self.vec_ax
-            vec_ax.pie(
+            xmin, xmax = self.vec_ax.get_xlim()
+            ymin, ymax = self.vec_ax.get_ylim()
+            center_x = (xmin + xmax) / 2
+            center_y = (ymin + ymax) / 2
+            radius = min(xmax - xmin, ymax - ymin) / 2
+
+            self.vec_ax.pie(
                 [1] * self.scale_len,
-                center=(c0[len(c0) // 2], c1[len(c1) // 2]),
+                center=(center_x, center_y),
                 startangle=start_deg,
                 colors=colors,
                 counterclock=True,
-                radius=1,
-                wedgeprops=dict(width=0.3),
+                radius=radius,
+                wedgeprops=dict(width=0.3 * radius),
                 labels=scale.keys(),
                 labeldistance=0.85,
-                textprops={"fontsize": 20},
+                textprops={"fontsize": 10},
             )
 
         self._running = True
@@ -296,64 +302,6 @@ class Instrument:
 
 
 def main() -> None:
-    c_maj = {
-        "C": 261.6256,
-        "D": 293.6648,
-        "E": 329.6276,
-        "F": 349.2282,
-        "G": 391.9954,
-        "A": 440.0000,
-        "B": 493.8833,
-    }
-    c_maj_by_fifths = {
-        "C": 261.6256,
-        "G": 391.9954,
-        "D": 293.6648,
-        "A": 440.0000,
-        "E": 329.6276,
-        "B": 493.8833,
-        "F": 349.2282,
-    }
-    c_min_by_fifths = {
-        "C": 261.6256,
-        "G": 391.9954,
-        "D": 293.6648,
-        "Ab": 415.3047,
-        "Eb": 311.1270,
-        "Bb": 466.1638,
-        "F": 349.2282,
-    }
-    c_doric_by_fifths = {
-        "C": 261.6256,
-        "G": 391.9954,
-        "D": 293.6648,
-        "Ab": 415.3047,
-        "Eb": 311.1270,
-        "B": 493.8833,
-        "F": 349.2282,
-    }
-    # Circle of fifths, only major key ring tonics
-    fifths = {
-        "C": 261.6256,
-        "G": 391.9954,
-        "D": 293.6648,
-        "A": 440.0000,
-        "E": 329.6276,
-        "B": 493.8833,
-        "F♯": 369.9944,
-        "C♯": 277.1826,
-    }
-    # Circle of fourths, only major key ring tonics
-    fourths = {
-        "C": 261.6256,
-        "F": 349.2282,
-        "Bb": 466.1638,
-        "Eb": 311.1270,
-        "Ab": 415.3047,
-        "Db": 277.1826,
-        "Gb": 369.9944,
-    }
-
     parser = configargparse.ArgParser()
     parser.add_argument("-c", "--config-file", is_config_file=True)
     parser.add_argument("-d", "--dimension", type=int, default=8)
@@ -366,6 +314,7 @@ def main() -> None:
     parser.add_argument("-dd", "--default-devices", action="store_true")
     parser.add_argument("--plot-scale", action="store_true")
     parser.add_argument("--plots", choices=["vector", "both"], default="both")
+    parser.add_argument("--scale", default="c_maj_by_fifths")
     args = parser.parse_args()
 
     dimension: int = args.dimension
@@ -376,6 +325,19 @@ def main() -> None:
     use_default_devices: bool = args.default_devices
     plot_scale: bool = args.plot_scale
     plots: str = args.plots
+    scale_name: str = args.scale
+
+    scales_file = (
+        Path(os.path.dirname(os.path.realpath(__file__))) / "scales.json"
+    )
+    with open(scales_file, "r", encoding="utf-8") as fp:
+        if sys.version_info < (3, 7):
+            # Python <3.7 does not decode key-values ordered by default
+            from collections import OrderedDict
+
+            scales = json.load(fp, object_pairs_hook=OrderedDict)
+        else:
+            scales = json.load(fp)
 
     Instrument(
         width=dimension,
@@ -385,7 +347,7 @@ def main() -> None:
         disorder=disorder,
         is_server=is_server,
         use_default_devices=use_default_devices,
-        scale=c_maj_by_fifths,
+        scale=scales[scale_name],
         plot_scale=plot_scale,
         plots=plots,
     ).run()
