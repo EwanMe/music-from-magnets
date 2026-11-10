@@ -12,7 +12,6 @@ from flatspin.model import PinwheelSpinIceDiamond, SquareSpinIceClosed, SpinIce
 from flatspin.plotting import plot_vectors
 import flatspin.plotting
 import matplotlib
-import matplotlib.axes
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import mido
@@ -274,9 +273,9 @@ class Instrument:
             # Map phi from radians to an index in the scale notes array
             idx = int(
                 np.floor(remap_range(phi, -np.pi, np.pi, 0, self.scale_len))
-                % self.scale_len
+                % self.scale_len  # Ensure [-pi, pi)
             )
-            freq = self.freq_scale[idx]
+            freq = self.freq_scale[idx] * (i + 2) * 0.5
             amp = remap_range(r, 0, 4, 0, 0.8)
             return freq, amp
 
