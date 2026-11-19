@@ -66,6 +66,8 @@ def main() -> None:
     with open(output_dir / f"stats_{audio_name}.json", "w") as fp:
         json.dump(stats, fp, indent=2)
 
+    plt.rcParams.update({"font.size": 15})
+
     fig_dir = output_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,7 +84,7 @@ def main() -> None:
     f_fig.savefig(fig_dir / "frequency_content.png", bbox_inches="tight")
 
     s_fig, s_ax = plt.subplots(figsize=(10, 5))
-    librosa.display.specshow(
+    img = librosa.display.specshow(
         S_db, y_axis="log", x_axis="time", ax=s_ax, n_fft=NFFT, hop_length=HOP
     )
     s_ax.plot(
@@ -104,6 +106,8 @@ def main() -> None:
         label="Bandwidth",
     )
     s_ax.legend(loc="lower right")
+    s_ax.margins(x=0)
+    s_fig.colorbar(img, ax=s_ax, format="%+2.f dB")
     s_fig.savefig(fig_dir / f"c_bw_{audio_name}.png", bbox_inches="tight")
 
     fl_fig, fl_ax = plt.subplots(figsize=(10, 5))
