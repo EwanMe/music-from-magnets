@@ -97,6 +97,7 @@ class Instrument:
         self.UV = self.grid.add_values(self.model.vectors, method="sum")
         x, y = self.grid.centers()
         XY = np.column_stack([x, y])
+        self._plot_grid()
 
         if self.plots == "both":
             # Plot lattice
@@ -162,6 +163,16 @@ class Instrument:
                 target=self._play_audio, args=(audio_dev,)
             )
             self._audio_thread.start()
+
+    def _plot_grid(self):
+        edges = self.grid.edges()
+        xmin, ymin, xmax, ymax = self.grid.extent
+        plt.grid(True, c="#999", alpha=1)
+
+        plt.xticks(edges[0])
+        plt.yticks(edges[1])
+        plt.xlim(xmin, xmax)
+        plt.ylim(ymin, ymax)
 
     def run(self):
         num_spins = self.model.N
